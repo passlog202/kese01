@@ -6,20 +6,22 @@
     .venv/bin/uvicorn server.app:app --host 0.0.0.0 --port 8000
 
 文档：http://127.0.0.1:8000/docs（Swagger UI）
+认证：JWT Bearer Token（/api/v1/auth/register、/api/v1/auth/login）
 """
 from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from core.config import BRANDS, CATEGORIES, TAGS_VOCAB
 from database import db
 from services import standard_service
-from server import schemas
+from server import schemas, security
 from server.service import (
     list_favorites,
     list_products,
@@ -47,6 +49,33 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 启动时保证数据库与种子数据已就绪
+db.init_db()
+if db.product_count() == 0:
+    db.seed_from_csv()
+
+
+# ---------------------------------------------------------------------------
+# 认证依赖
+# ---------------------------------------------------------------------------
+bearer_scheme = HTTPBearer(auto_error=False)
+
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+) -> dict:
+    """解析 Bearer Token 并返回当前用户，未认证/无效/过期则 401。"""
+    if credentials is None or not credentials.credentials:
+        raise HTTPException(status_code=401, detail={"code": "UNAUTHORIZED", "message": "未登录或缺少凭证"})
+    payload = security.decode_access_token(credentials.credentials)
+    if payload is None:
+        raise HTTPException(status_code=401, detail={"code": "UNAUTHORIZED", "message": "登录凭证无效或已过期，请重新登录"})
+    uid = int(payload.get("sub", 0))
+    user = db.get_user(uid)
+    if user is None:
+        raise HTTPException(status_code=401, detail={"code": "UNAUTHORIZED", "message": "用户不存在"})
+    return {"id": user["id"], "username": user["username"]}
+
 
 # ---------------------------------------------------------------------------
 # 统一错误响应：让所有 4xx/5xx 都符合契约中的统一错误结构
@@ -65,7 +94,6 @@ def _error_body(code: str, message: str, field: str | None = None, status: int =
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
-    # 兼容我们在业务中抛出的 detail={"code","message","field"} 结构
     if isinstance(exc.detail, dict):
         return _error_body(
             code=exc.detail.get("code", "INTERNAL_ERROR"),
@@ -90,17 +118,15 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         status=422,
     )
 
-# 启动时保证数据库与种子数据已就绪
-db.init_db()
-if db.product_count() == 0:
-    db.seed_from_csv()
-
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     return _error_body(code="INTERNAL_ERROR", message="服务器内部错误", status=500)
 
 
+# ---------------------------------------------------------------------------
+# 公开端点（无需认证）
+# ---------------------------------------------------------------------------
 @app.get("/", tags=["meta"], summary="服务健康/说明")
 def root() -> dict:
     return {
@@ -130,22 +156,42 @@ def health() -> schemas.HealthData:
 
 
 @app.post(
-    "/api/v1/parse",
-    response_model=schemas.ParseResponse,
-    tags=["recommendation"],
-    summary="自然语言需求解析",
+    "/api/v1/auth/register",
+    response_model=schemas.AuthResponse,
+    tags=["auth"],
+    summary="注册",
 )
-def parse_endpoint(req: schemas.ParseRequest) -> schemas.ParseResponse:
-    data = parse_requirement_text(req.text)
-    return schemas.ParseResponse(ok=True, data=data, error=None)
+def auth_register(req: schemas.RegisterRequest) -> schemas.AuthResponse:
+    if db.get_user_by_username(req.username) is not None:
+        raise HTTPException(status_code=409, detail={"code": "USER_EXISTS", "message": "用户名已存在", "field": "username"})
+    uid = db.create_user(req.username, security.hash_password(req.password))
+    token = security.create_access_token(uid, req.username)
+    return schemas.AuthResponse(
+        ok=True,
+        data=schemas.AuthData(token=token, user=schemas.AuthUser(id=uid, username=req.username)),
+        error=None,
+    )
 
 
-@app.get(
-    "/api/v1/meta",
-    response_model=schemas.MetaResponse,
-    tags=["meta"],
-    summary="元数据（类别/品牌/标签词表）",
+@app.post(
+    "/api/v1/auth/login",
+    response_model=schemas.AuthResponse,
+    tags=["auth"],
+    summary="登录",
 )
+def auth_login(req: schemas.LoginRequest) -> schemas.AuthResponse:
+    user = db.get_user_by_username(req.username)
+    if user is None or not security.verify_password(req.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail={"code": "INVALID_CREDENTIALS", "message": "用户名或密码错误"})
+    token = security.create_access_token(user["id"], user["username"])
+    return schemas.AuthResponse(
+        ok=True,
+        data=schemas.AuthData(token=token, user=schemas.AuthUser(id=user["id"], username=user["username"])),
+        error=None,
+    )
+
+
+@app.get("/api/v1/meta", tags=["meta"], summary="元数据（类别/品牌/标签词表）")
 def meta() -> schemas.MetaResponse:
     return schemas.MetaResponse(
         ok=True,
@@ -154,6 +200,22 @@ def meta() -> schemas.MetaResponse:
     )
 
 
+# ---------------------------------------------------------------------------
+# 认证端点（需登录）
+# ---------------------------------------------------------------------------
+@app.get(
+    "/api/v1/auth/me",
+    response_model=schemas.MeResponse,
+    tags=["auth"],
+    summary="当前登录用户",
+)
+def auth_me(user: dict = Depends(get_current_user)) -> schemas.MeResponse:
+    return schemas.MeResponse(ok=True, data=schemas.AuthUser(id=user["id"], username=user["username"]), error=None)
+
+
+# ---------------------------------------------------------------------------
+# 受保护端点（需登录）
+# ---------------------------------------------------------------------------
 @app.get(
     "/api/v1/products",
     response_model=schemas.ProductListResponse,
@@ -163,6 +225,7 @@ def meta() -> schemas.MetaResponse:
 def products_list(
     category: str | None = Query(default=None, description="商品类别"),
     keyword: str | None = Query(default=None, description="名称/品牌/标签关键词"),
+    _user: dict = Depends(get_current_user),
 ) -> schemas.ProductListResponse:
     data = list_products(category, keyword)
     return schemas.ProductListResponse(ok=True, data=data, error=None)
@@ -174,8 +237,11 @@ def products_list(
     tags=["recommendation"],
     summary="智能推荐",
 )
-def recommend_endpoint(req: schemas.RecommendationRequest) -> schemas.RecommendationResponse:
-    data = recommend(req)
+def recommend_endpoint(
+    req: schemas.RecommendationRequest,
+    user: dict = Depends(get_current_user),
+) -> schemas.RecommendationResponse:
+    data = recommend(req, user["id"])
     return schemas.RecommendationResponse(ok=True, data=data, error=None)
 
 
@@ -185,19 +251,39 @@ def recommend_endpoint(req: schemas.RecommendationRequest) -> schemas.Recommenda
     tags=["standards"],
     summary="执行标准核验",
 )
-def standards_verify(req: schemas.VerifyStandardRequest) -> schemas.StandardEvidenceResponse:
+def standards_verify(
+    req: schemas.VerifyStandardRequest,
+    _user: dict = Depends(get_current_user),
+) -> schemas.StandardEvidenceResponse:
     data = verify_standard(req.text)
     return schemas.StandardEvidenceResponse(ok=True, data=data, error=None)
 
 
+@app.post(
+    "/api/v1/parse",
+    response_model=schemas.ParseResponse,
+    tags=["recommendation"],
+    summary="自然语言需求解析",
+)
+def parse_endpoint(
+    req: schemas.ParseRequest,
+    _user: dict = Depends(get_current_user),
+) -> schemas.ParseResponse:
+    data = parse_requirement_text(req.text)
+    return schemas.ParseResponse(ok=True, data=data, error=None)
+
+
+# ---------------------------------------------------------------------------
+# 收藏（需登录，按用户隔离）
+# ---------------------------------------------------------------------------
 @app.get(
     "/api/v1/favorites",
     response_model=schemas.ProductListResponse,
     tags=["favorites"],
     summary="收藏列表",
 )
-def favorites_list() -> schemas.ProductListResponse:
-    items = list_favorites()
+def favorites_list(user: dict = Depends(get_current_user)) -> schemas.ProductListResponse:
+    items = list_favorites(user["id"])
     return schemas.ProductListResponse(
         ok=True,
         data=schemas.ProductListData(count=len(items), items=items),
@@ -211,13 +297,16 @@ def favorites_list() -> schemas.ProductListResponse:
     tags=["favorites"],
     summary="添加收藏",
 )
-def favorites_add(req: schemas.FavoriteAddRequest) -> schemas.FavoriteAddResponse:
+def favorites_add(
+    req: schemas.FavoriteAddRequest,
+    user: dict = Depends(get_current_user),
+) -> schemas.FavoriteAddResponse:
     if db.get_product(req.product_id) is None:
         raise HTTPException(
             status_code=404,
             detail={"code": "NOT_FOUND", "message": f"商品 {req.product_id} 不存在", "field": "product_id"},
         )
-    db.add_favorite(req.product_id)
+    db.add_favorite(user["id"], req.product_id)
     return schemas.FavoriteAddResponse(ok=True, data={"added": True, "product_id": req.product_id}, error=None)
 
 
@@ -227,18 +316,27 @@ def favorites_add(req: schemas.FavoriteAddRequest) -> schemas.FavoriteAddRespons
     tags=["favorites"],
     summary="取消收藏",
 )
-def favorites_remove(product_id: int) -> schemas.FavoriteAddResponse:
-    db.remove_favorite(product_id)
+def favorites_remove(
+    product_id: int,
+    user: dict = Depends(get_current_user),
+) -> schemas.FavoriteAddResponse:
+    db.remove_favorite(user["id"], product_id)
     return schemas.FavoriteAddResponse(ok=True, data={"added": False, "product_id": product_id}, error=None)
 
 
+# ---------------------------------------------------------------------------
+# 历史（需登录，按用户隔离）
+# ---------------------------------------------------------------------------
 @app.get(
     "/api/v1/history/recommendations",
     response_model=schemas.HistoryResponse,
     tags=["history"],
     summary="历史推荐列表",
 )
-def history_recommendations(limit: int = Query(default=50, ge=1, le=500)) -> schemas.HistoryResponse:
-    rows = db.list_recommendations(limit=limit)
+def history_recommendations(
+    limit: int = Query(default=50, ge=1, le=500),
+    user: dict = Depends(get_current_user),
+) -> schemas.HistoryResponse:
+    rows = db.list_recommendations(user["id"], limit=limit)
     items = [schemas.HistoryRecord(**r) for r in rows]
     return schemas.HistoryResponse(ok=True, data=schemas.HistoryData(count=len(items), items=items), error=None)

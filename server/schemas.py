@@ -209,6 +209,44 @@ class MetaResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# 认证
+# ---------------------------------------------------------------------------
+class RegisterRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=32, pattern=r"^[A-Za-z0-9_\u4e00-\u9fa5]{3,32}$")
+    password: str = Field(min_length=6, max_length=64)
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class AuthUser(BaseModel):
+    id: int
+    username: str
+
+
+class AuthData(BaseModel):
+    token: str
+    user: AuthUser
+    token_type: str = "bearer"
+
+
+class AuthResponse(BaseModel):
+    api_version: str = API_VERSION
+    ok: bool = True
+    data: AuthData
+    error: Optional[dict] = None
+
+
+class MeResponse(BaseModel):
+    api_version: str = API_VERSION
+    ok: bool = True
+    data: AuthUser
+    error: Optional[dict] = None
+
+
+# ---------------------------------------------------------------------------
 # 统一错误
 # ---------------------------------------------------------------------------
 class ErrorDetail(BaseModel):

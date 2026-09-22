@@ -11,6 +11,8 @@ services:
     container_name: kese-api
     environment:
       - KESE_DB_PATH=/app/data/smart_shop.db
+      # 生产环境务必替换为强随机密钥（如 openssl rand -hex 32），并建议用 secrets 管理
+      - KESE_JWT_SECRET=${KESE_JWT_SECRET:-change-me-in-production}
     ports:
       - "8000:8000"
     volumes:

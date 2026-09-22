@@ -57,7 +57,7 @@ def to_schema_items(items: list[RecommendationItem]) -> list[schemas.Recommendat
     return out
 
 
-def recommend(req: schemas.RecommendationRequest) -> schemas.RecommendationData:
+def recommend(req: schemas.RecommendationRequest, user_id: int) -> schemas.RecommendationData:
     query = query_from_request(req)
     items = recommendation_service.recommend(
         db.get_all_products(), query,
@@ -65,8 +65,9 @@ def recommend(req: schemas.RecommendationRequest) -> schemas.RecommendationData:
     )
     # 复用 api_contract 的统一结构，保证与文档契约 / 进程内调用一致
     payload = build_recommendation_response(items, query.to_dict())
-    # 持久化本次推荐到历史（HTTP 模式同样保留历史，前端「推荐历史」页依赖此数据）
+    # 按用户持久化本次推荐到历史（前端「推荐历史」页依赖此数据）
     db.save_recommendation(
+        user_id,
         json.dumps(query.to_dict(), ensure_ascii=False),
         json.dumps(payload["data"], ensure_ascii=False),
     )
@@ -81,8 +82,8 @@ def list_products(category: str | None, keyword: str | None) -> schemas.ProductL
     )
 
 
-def list_favorites() -> list[schemas.ProductSummary]:
-    return [product_to_summary(p) for p in db.get_favorites()]
+def list_favorites(user_id: int) -> list[schemas.ProductSummary]:
+    return [product_to_summary(p) for p in db.get_favorites(user_id)]
 
 
 def verify_standard(text: str) -> schemas.StandardEvidence:
