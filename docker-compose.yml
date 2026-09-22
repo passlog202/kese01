@@ -1,0 +1,40 @@
+# 智能导购系统 · 前端(nginx) + 后端(FastAPI) 一键编排
+# 启动：docker compose up --build -d
+# 访问：http://localhost:8080 （前端，已反代 /api）
+#       http://localhost:8000/docs （后端 Swagger，仅调试）
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    image: kese-api:latest
+    container_name: kese-api
+    environment:
+      - KESE_DB_PATH=/app/data/smart_shop.db
+    ports:
+      - "8000:8000"
+    volumes:
+      - kese_data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/api/v1/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    image: kese-web:latest
+    container_name: kese-web
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
+volumes:
+  kese_data:
