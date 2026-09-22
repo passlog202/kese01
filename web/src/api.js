@@ -41,8 +41,11 @@ export const api = {
   meta: () => http.get('/meta'),
 
   // 认证
-  register: (username, password, email = null) => http.post('/auth/register', { username, password, email }),
-  login: (identifier, password) => http.post('/auth/login', { username: identifier, password }),
+  captcha: () => http.get('/auth/captcha'),
+  register: (username, password, email = null, captcha_id = null, captcha_code = null) =>
+    http.post('/auth/register', { username, password, email, captcha_id, captcha_code }),
+  login: (identifier, password, captcha_id = null, captcha_code = null) =>
+    http.post('/auth/login', { username: identifier, password, captcha_id, captcha_code }),
   me: () => http.get('/auth/me'),
   sendCode: (email, purpose = 'register') => http.post('/auth/send-code', { email, purpose }),
   verifyCode: (email, code, purpose = 'register') => http.post('/auth/verify-code', { email, code, purpose }),

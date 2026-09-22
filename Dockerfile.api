@@ -11,6 +11,10 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
+# 图形验证码需要 TTF 字体（DejaVu 系列），否则回退 Pillow 内置字体
+RUN apt-get update && apt-get install -y --no-install-recommends fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
+
 # 拷贝源码
 COPY . .
 

@@ -21,6 +21,8 @@ services:
       - KESE_SMTP_USER=${KESE_SMTP_USER:-}
       - KESE_SMTP_PASSWORD=${KESE_SMTP_PASSWORD:-}
       - KESE_SMTP_FROM=${KESE_SMTP_FROM:-}
+      # 图形验证码（可选）：有效期秒数，默认 180；位数默认 4
+      - KESE_CAPTCHA_TTL=${KESE_CAPTCHA_TTL:-180}
     ports:
       - "8000:8000"
     volumes:

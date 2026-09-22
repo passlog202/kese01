@@ -69,6 +69,13 @@ CREATE TABLE IF NOT EXISTS login_security (
     locked_until REAL NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS captchas (
+    id          TEXT PRIMARY KEY,
+    code_hash   TEXT NOT NULL,
+    expires_at  REAL NOT NULL,
+    verified    INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS recommendation_history (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id     INTEGER NOT NULL,
@@ -500,5 +507,39 @@ def clear_login_failures(ident: str) -> None:
     try:
         conn.execute("DELETE FROM login_security WHERE ident = ?", (ident,))
         conn.commit()
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# 图片验证码
+# ---------------------------------------------------------------------------
+def save_captcha(captcha_id: str, code_hash: str, expires_at: float) -> None:
+    conn = _connect()
+    try:
+        conn.execute(
+            "INSERT INTO captchas (id, code_hash, expires_at, verified) VALUES (?,?,?,0)",
+            (captcha_id, code_hash, expires_at),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def verify_captcha(captcha_id: str, code: str) -> bool:
+    """校验并消费验证码（一次性）：未命中/过期/已用/不符 → False；
+    命中 → 标记 verified 并返回 True。"""
+    now = time.time()
+    conn = _connect()
+    try:
+        row = conn.execute("SELECT * FROM captchas WHERE id = ?", (captcha_id,)).fetchone()
+        if row is None or row["verified"] or row["expires_at"] < now:
+            return False
+        from server.security import verify_code_hash  # 局部导入避免循环依赖
+        if not verify_code_hash(code.upper().strip(), row["code_hash"]):
+            return False
+        conn.execute("UPDATE captchas SET verified = 1 WHERE id = ?", (captcha_id,))
+        conn.commit()
+        return True
     finally:
         conn.close()

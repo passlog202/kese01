@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import time
 from datetime import datetime
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
@@ -21,7 +22,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from core.config import BRANDS, CATEGORIES, TAGS_VOCAB
 from database import db
 from services import standard_service
-from server import limits, mailer, schemas, security
+from server import captcha, limits, mailer, schemas, security
 from server.service import (
     list_favorites,
     list_products,
@@ -177,6 +178,31 @@ def root() -> dict:
 
 
 @app.get(
+    "/api/v1/auth/captcha",
+    response_model=schemas.CaptchaResponse,
+    tags=["auth"],
+    summary="获取图片验证码",
+)
+def auth_captcha() -> schemas.CaptchaResponse:
+    """生成一次性图形验证码，返回 id 与 base64 图片。客户端刷新可再次调用。"""
+    captcha_id, code, image = captcha.new_captcha()
+    db.save_captcha(captcha_id, security.hash_verify_code(code), time.time() + captcha.CAPTCHA_TTL_SECONDS)
+    return schemas.CaptchaResponse(
+        ok=True,
+        data=schemas.CaptchaData(id=captcha_id, image=image, ttl=captcha.CAPTCHA_TTL_SECONDS),
+        error=None,
+    )
+
+
+def _require_captcha(captcha_id: str | None, captcha_code: str | None) -> None:
+    """登录/注册前校验图形验证码（对应 send-code 未要求时仅在登录接口强制使用）。"""
+    if not captcha_id or not captcha_code:
+        raise HTTPException(status_code=400, detail={"code": "CAPTCHA_REQUIRED", "message": "请完成图形验证码"})
+    if not db.verify_captcha(captcha_id, captcha_code):
+        raise HTTPException(status_code=400, detail={"code": "CAPTCHA_INVALID", "message": "图形验证码错误或已过期，请刷新重试", "field": "captcha_code"})
+
+
+@app.get(
     "/api/v1/health",
     response_model=schemas.HealthData,
     tags=["meta"],
@@ -206,6 +232,8 @@ def auth_register(req: schemas.RegisterRequest, request: Request) -> schemas.Aut
         f"register:ip:{ip}", limits.IP_REGISTER_PER_HOUR, 3600, db,
         "注册过于频繁，请稍后再试", request,
     )
+    # 图形验证码
+    _require_captcha(req.captcha_id, req.captcha_code)
     if db.get_user_by_username(req.username) is not None:
         raise HTTPException(status_code=409, detail={"code": "USER_EXISTS", "message": "用户名已存在", "field": "username"})
     email = (req.email or "").strip().lower() or None
@@ -232,6 +260,8 @@ def auth_login(req: schemas.LoginRequest, request: Request) -> schemas.AuthRespo
         f"login:ip:{ip}", limits.IP_LOGIN_PER_10MIN, 600, db,
         "登录尝试过于频繁，请 10 分钟后再试", request,
     )
+    # 图形验证码
+    _require_captcha(req.captcha_id, req.captcha_code)
 
     # 账号锁定检查（连续失败）
     lock = db.get_login_lock(ident)

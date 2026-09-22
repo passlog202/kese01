@@ -215,11 +215,15 @@ class RegisterRequest(BaseModel):
     username: str = Field(min_length=3, max_length=32, pattern=r"^[A-Za-z0-9_\u4e00-\u9fa5]{3,32}$")
     password: str = Field(min_length=6, max_length=64)
     email: Optional[str] = Field(default=None, description="邮箱（可选，提供则走邮箱验证/可直接绑定）")
+    captcha_id: Optional[str] = None
+    captcha_code: Optional[str] = None
 
 
 class LoginRequest(BaseModel):
     username: str = ""
     password: str = ""
+    captcha_id: Optional[str] = None
+    captcha_code: Optional[str] = None
 
 
 class SendCodeRequest(BaseModel):
@@ -283,6 +287,19 @@ class MeResponse(BaseModel):
     api_version: str = API_VERSION
     ok: bool = True
     data: AuthUser
+    error: Optional[dict] = None
+
+
+class CaptchaData(BaseModel):
+    id: str
+    image: str = ""  # base64 data-uri
+    ttl: int = 180
+
+
+class CaptchaResponse(BaseModel):
+    api_version: str = API_VERSION
+    ok: bool = True
+    data: Optional[CaptchaData] = None
     error: Optional[dict] = None
 
 

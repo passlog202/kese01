@@ -1,6 +1,6 @@
 // 🔐 登录 / 注册 / 找回密码 页（邮箱验证码）
 <script setup>
-import { reactive, ref, computed, onBeforeUnmount } from 'vue'
+import { reactive, ref, computed, onBeforeUnmount, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '@/api'
@@ -18,9 +18,14 @@ const form = reactive({
   username: '',     // 注册
   email: '',        // 注册 / 找回密码
   code: '',
+  captcha: '',
   password: '',
   confirm: '',
 })
+
+// 图形验证码
+const captcha = reactive({ id: '', image: '' })
+const captchaLoading = ref(false)
 
 // 验证码倒计时
 const countdown = ref(0)
@@ -29,6 +34,19 @@ let timer = null
 
 const debugCode = ref('') // 调试模式下后端回显的验证码
 
+async function loadCaptcha() {
+  captchaLoading.value = true
+  try {
+    const res = await api.captcha()
+    captcha.id = res.data.id
+    captcha.image = res.data.image
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    captchaLoading.value = false
+  }
+}
+
 function switchMode(m) {
   mode.value = m
   form.password = ''
@@ -36,6 +54,7 @@ function switchMode(m) {
   form.code = ''
   debugCode.value = ''
   clearTimer()
+  loadCaptcha()
 }
 
 function clearTimer() {
@@ -43,6 +62,7 @@ function clearTimer() {
   countdown.value = 0
 }
 onBeforeUnmount(clearTimer)
+onMounted(loadCaptcha)
 
 const AUTH_EMAIL = computed(() => (mode.value === 'reset' ? form.email : form.email))
 
@@ -81,6 +101,10 @@ async function submit() {
       ElMessage.warning('请输入账号和密码')
       return
     }
+    if (!form.captcha.trim()) {
+      ElMessage.warning('请输入图形验证码')
+      return
+    }
   } else if (mode.value === 'register') {
     if (!form.username.trim() || form.username.trim().length < 3) {
       ElMessage.warning('用户名至少 3 位')
@@ -117,10 +141,14 @@ async function submit() {
   try {
     let res
     if (mode.value === 'login') {
-      res = await api.login(form.identifier.trim(), form.password)
+      res = await api.login(form.identifier.trim(), form.password, captcha.id, form.captcha.trim())
     } else if (mode.value === 'register') {
+      if (!form.captcha.trim()) {
+        ElMessage.warning('请输入图形验证码')
+        return
+      }
       await api.verifyCode(form.email.trim(), form.code.trim(), 'register')
-      res = await api.register(form.username.trim(), form.password, form.email.trim())
+      res = await api.register(form.username.trim(), form.password, form.email.trim(), captcha.id, form.captcha.trim())
     } else {
       res = await api.resetPassword(form.email.trim(), form.code.trim(), form.password)
     }
@@ -132,6 +160,11 @@ async function submit() {
     router.replace(route.query.redirect || '/')
   } catch (e) {
     ElMessage.error(e.message)
+    // 图形验证码错误后自动刷新
+    if (/验证码/.test(e.message)) {
+      loadCaptcha()
+      form.captcha = ''
+    }
   } finally {
     loading.value = false
   }
@@ -156,6 +189,15 @@ async function submit() {
         <el-form-item label="密码">
           <el-input v-model="form.password" type="password" show-password placeholder="密码" size="large" @keyup.enter="submit" />
         </el-form-item>
+        <el-form-item label="图形验证码">
+          <div class="captcha-row">
+            <el-input v-model="form.captcha" placeholder="4 位验证码" maxlength="4" size="large" style="flex:1" @keyup.enter="submit" />
+            <div class="captcha-img" :class="{ loading: captchaLoading }" @click="loadCaptcha" title="点击刷新">
+              <img v-if="captcha.image" :src="captcha.image" alt="captcha" />
+              <span v-else class="captcha-placeholder">加载中…</span>
+            </div>
+          </div>
+        </el-form-item>
         <el-button type="primary" size="large" class="submit-btn" :loading="loading" @click="submit">登 录</el-button>
         <div class="links">
           <a @click="switchMode('register')">邮箱注册</a>
@@ -179,6 +221,15 @@ async function submit() {
         <el-form-item label="邮箱验证码">
           <el-input v-model="form.code" placeholder="6 位数字" maxlength="6" size="large" />
           <div v-if="debugCode" class="debug-hint">💡 调试模式，验证码：{{ debugCode }}</div>
+        </el-form-item>
+        <el-form-item label="图形验证码">
+          <div class="captcha-row">
+            <el-input v-model="form.captcha" placeholder="4 位验证码" maxlength="4" size="large" style="flex:1" />
+            <div class="captcha-img" :class="{ loading: captchaLoading }" @click="loadCaptcha" title="点击刷新">
+              <img v-if="captcha.image" :src="captcha.image" alt="captcha" />
+              <span v-else class="captcha-placeholder">加载中…</span>
+            </div>
+          </div>
         </el-form-item>
         <el-form-item label="密码">
           <el-input v-model="form.password" type="password" show-password placeholder="至少 6 位" size="large" />
@@ -264,6 +315,39 @@ h1 {
   display: flex;
   gap: 10px;
   width: 100%;
+}
+.captcha-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+}
+.captcha-img {
+  width: 120px;
+  height: 44px;
+  border-radius: 8px;
+  border: 1px solid #eef0f4;
+  overflow: hidden;
+  cursor: pointer;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f6f8fb;
+}
+.captcha-img.loading {
+  opacity: 0.6;
+  pointer-events: none;
+}
+.captcha-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.captcha-placeholder {
+  font-size: 12px;
+  color: #a6afbd;
 }
 .code-row .el-button {
   flex-shrink: 0;
