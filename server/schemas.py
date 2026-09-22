@@ -199,12 +199,39 @@ class MetaData(BaseModel):
     categories: list[str]
     brands: list[str]
     tags: list[str]
+    data_source: dict = Field(default_factory=dict, description="当前商品数据源状态")
 
 
 class MetaResponse(BaseModel):
     api_version: str = API_VERSION
     ok: bool = True
     data: MetaData
+    error: Optional[dict] = None
+
+
+# ---------------------------------------------------------------------------
+# 数据源同步
+# ---------------------------------------------------------------------------
+class SyncRequest(BaseModel):
+    keyword: str = ""
+    limit: int = Field(default=40, ge=1, le=200)
+
+
+class SyncResult(BaseModel):
+    source: str
+    configuration: dict
+    keyword: str
+    fetched: int
+    skipped: int = 0
+    elapsed_ms: int = 0
+    messages: list[str] = []
+    product_total: int = 0
+
+
+class SyncResponse(BaseModel):
+    api_version: str = API_VERSION
+    ok: bool = True
+    data: SyncResult
     error: Optional[dict] = None
 
 

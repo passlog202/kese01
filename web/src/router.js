@@ -10,6 +10,7 @@ const routes = [
   { path: '/favorites', name: 'favorites', component: () => import('@/views/FavoritesView.vue'), meta: { title: '收藏商品' } },
   { path: '/history', name: 'history', component: () => import('@/views/HistoryView.vue'), meta: { title: '推荐历史' } },
   { path: '/analytics', name: 'analytics', component: () => import('@/views/AnalyticsView.vue'), meta: { title: '数据分析' } },
+  { path: '/data-source', name: 'data-source', component: () => import('@/views/DataSourceView.vue'), meta: { title: '数据源同步' } },
   { path: '/:pathMatch(.*)*', redirect: '/' },
 ]
 

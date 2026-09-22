@@ -8,6 +8,7 @@
 > - **前后端解耦**：Vue 3 前端纯 HTTP 调用 FastAPI 契约服务（Swagger 文档）
 > - **登录鉴权 + 邮箱注册**：JWT + PBKDF2 密码哈希；邮箱验证码注册/找回密码，收藏与历史按用户隔离
 > - **安全防护**：图形验证码、发码/IP 限流、登录失败锁定、请求体大小限制、安全响应头
+> - **真实数据源**：`providers/` 适配层对接拼多多开放平台，一键同步真实商品
 > - **Docker 部署**：nginx 前端 + uvicorn 后端一键编排
 
 ## 功能
@@ -22,6 +23,7 @@
 | ❤️ 收藏商品 | SQLite 持久化收藏 |
 | 🕘 推荐历史 | 历史查询与推荐结果回看 |
 | 📊 数据分析 | 价格分布、品牌排行、评分-价格散点、标准合规统计 |
+| 📥 数据源同步 | 一键从拼多多开放平台 / Mock 同步商品入库 |
 
 ## 快速开始
 
@@ -47,6 +49,26 @@ npm run dev                        # http://localhost:5173 （已代理 /api →
 > 图形验证码由 Pillow 动态生成（数字 + 去易混淆字母、干扰线/噪点/旋转，一次性使用、默认 180 秒
 > 过期）；依赖 TTF 字体，Debian/Ubuntu 下为 `fonts-dejavu-core`（Docker 镜像已内置），
 > 缺字体时自动回退 Pillow 内置字体，不影响运行。
+
+### 接入拼多多开放平台（真实数据源）
+
+默认数据源是 Mock（开箱即跑）。要拉真实商品，在[拼多多开放平台](https://open.pinduoduo.com)
+创建应用拿到 `client_id / client_secret`，然后配置环境变量：
+
+```bash
+export KESE_PRODUCT_SOURCE=pdd
+export KESE_PDD_CLIENT_ID=你的client_id
+export KESE_PDD_CLIENT_SECRET=你的client_secret
+
+# 方式一：登录后，前端「数据源同步」页输入关键词一键同步
+# 方式二：命令行
+.venv/bin/python -m providers.cli --keyword 保鲜盒 --limit 40
+```
+
+实现为 `providers/pdd.py`（`pdd.ddk.goods.search`，免商家 access_token），签名算法见模块注释。
+> ⚠️ 拼多多搜索接口**不含执行标准号/材质/评分/库存**等字段，适配层如实留空、核验时标记
+> 「未标注」，绝不编造；真实商品的标准号需用 OCR（增量模块）补齐。
+> 完整环境变量样例见 `.env.example`。
 
 ### Docker 部署
 

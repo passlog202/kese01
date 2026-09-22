@@ -21,6 +21,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from core.config import BRANDS, CATEGORIES, TAGS_VOCAB
 from database import db
+from providers import get_provider, provider_status
 from services import standard_service
 from server import captcha, limits, mailer, schemas, security
 from server.service import (
@@ -398,7 +399,41 @@ def auth_reset_password(req: schemas.ResetPasswordRequest, request: Request) -> 
 def meta() -> schemas.MetaResponse:
     return schemas.MetaResponse(
         ok=True,
-        data=schemas.MetaData(categories=CATEGORIES, brands=BRANDS, tags=TAGS_VOCAB),
+        data=schemas.MetaData(categories=CATEGORIES, brands=BRANDS, tags=TAGS_VOCAB, data_source=provider_status()),
+        error=None,
+    )
+
+
+@app.post("/api/v1/data-source/sync", tags=["meta"], summary="从当前数据源同步商品（mock/pdd）")
+def data_source_sync(req: schemas.SyncRequest, _user: dict = Depends(get_current_user)) -> schemas.SyncResponse:
+    """按 `KESE_PRODUCT_SOURCE` 抓取 `keyword` 并写入商品表。
+
+    - mock：请求失败安全回退到 mock
+    - pdd：请求实时调用拼多多开放平台（需凭据），失败抛 RuntimeError（结构化 502）
+    """
+    import time as _time
+
+    provider = get_provider()
+    started = _time.time()
+    try:
+        items, stats = provider.fetch_products(req.keyword, req.limit)
+    except (RuntimeError, ValueError) as e:
+        raise HTTPException(status_code=502, detail={"code": "DATA_SOURCE_ERROR", "message": str(e)}) from e
+
+    db.sync_products([vars(it) for it in items])
+    elapsed_ms = int((_time.time() - started) * 1000)
+    return schemas.SyncResponse(
+        ok=True,
+        data=schemas.SyncResult(
+            source=provider.source,
+            configuration=provider_status(),
+            keyword=req.keyword,
+            fetched=len(items),
+            skipped=stats.skipped,
+            elapsed_ms=elapsed_ms or stats.elapsed_ms,
+            messages=stats.messages,
+            product_total=db.product_count(),
+        ),
         error=None,
     )
 

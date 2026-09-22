@@ -23,6 +23,10 @@ services:
       - KESE_SMTP_FROM=${KESE_SMTP_FROM:-}
       # 图形验证码（可选）：有效期秒数，默认 180；位数默认 4
       - KESE_CAPTCHA_TTL=${KESE_CAPTCHA_TTL:-180}
+      # 数据源（可选）：mock | pdd。选 pdd 时需同时配置下方两项凭据
+      - KESE_PRODUCT_SOURCE=${KESE_PRODUCT_SOURCE:-mock}
+      - KESE_PDD_CLIENT_ID=${KESE_PDD_CLIENT_ID:-}
+      - KESE_PDD_CLIENT_SECRET=${KESE_PDD_CLIENT_SECRET:-}
     ports:
       - "8000:8000"
     volumes:

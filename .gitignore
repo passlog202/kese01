@@ -8,6 +8,12 @@ venv/
 smart_shop.db
 *.db-journal
 data/mail_outbox/
+data/snapshots/
+
+# 环境变量（含拼多多 client_secret 等敏感信息，严禁入库）
+.env
+.env.*
+!.env.example
 
 # 前端
 web/node_modules/

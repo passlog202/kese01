@@ -29,6 +29,10 @@ export function useNav() {
       label: '洞察',
       items: [{ name: 'analytics', path: '/analytics', icon: '📊', title: '数据分析' }],
     },
+    {
+      label: '数据',
+      items: [{ name: 'data-source', path: '/data-source', icon: '📥', title: '数据源同步' }],
+    },
   ]
 
   const activePath = computed(() => route.path)
