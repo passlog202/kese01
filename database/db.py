@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import csv as _csv
 import sqlite3
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -54,6 +55,18 @@ CREATE TABLE IF NOT EXISTS email_codes (
     expires_at  TEXT NOT NULL,
     attempts    INTEGER NOT NULL DEFAULT 0,
     created_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS rate_limits (
+    bucket       TEXT PRIMARY KEY,
+    count        INTEGER NOT NULL DEFAULT 0,
+    window_start REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS login_security (
+    ident        TEXT PRIMARY KEY,
+    fail_count   INTEGER NOT NULL DEFAULT 0,
+    locked_until REAL NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS recommendation_history (
@@ -409,5 +422,83 @@ def get_favorite_ids(user_id: int) -> set[int]:
     try:
         rows = conn.execute("SELECT product_id FROM favorites WHERE user_id = ?", (user_id,)).fetchall()
         return {r[0] for r in rows}
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# 限流（固定窗口计数器，SQLite 持久化，多进程一致）
+# ---------------------------------------------------------------------------
+def rate_limit_hit(bucket: str, limit: int, window_seconds: float) -> tuple[bool, float]:
+    """对 bucket 计数一次。返回 (是否触发限流, 剩余等待秒数)。
+
+    - 未触发：计数 +1 并返回 (False, 0)
+    - 触发（超过 limit）：返回 (True, 窗口剩余秒数)
+    """
+    now = time.time()
+    conn = _connect()
+    try:
+        row = conn.execute("SELECT count, window_start FROM rate_limits WHERE bucket = ?", (bucket,)).fetchone()
+        if row is None or now - row["window_start"] >= window_seconds:
+            conn.execute(
+                "INSERT INTO rate_limits (bucket, count, window_start) VALUES (?,1,?) "
+                "ON CONFLICT(bucket) DO UPDATE SET count=1, window_start=excluded.window_start",
+                (bucket, now),
+            )
+            conn.commit()
+            return False, 0.0
+        if row["count"] >= limit:
+            # 已超限：不继续累加，返回剩余等待时间
+            return True, max(0.0, row["window_start"] + window_seconds - now)
+        conn.execute("UPDATE rate_limits SET count = count + 1 WHERE bucket = ?", (bucket,))
+        conn.commit()
+        return False, 0.0
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# 登录安全（连续失败锁定）
+# ---------------------------------------------------------------------------
+def login_failure(ident: str, max_attempts: int, lock_seconds: float) -> dict:
+    """记录一次登录失败，返回 {locked, wait, fail_count}。超过阈值则锁定。"""
+    now = time.time()
+    conn = _connect()
+    try:
+        row = conn.execute("SELECT * FROM login_security WHERE ident = ?", (ident,)).fetchone()
+        if row is not None and row["locked_until"] > now:
+            return {"locked": True, "wait": row["locked_until"] - now, "fail_count": row["fail_count"]}
+        fail_count = 1 if row is None else row["fail_count"] + 1
+        locked_until = now + lock_seconds if fail_count >= max_attempts else 0.0
+        conn.execute(
+            "INSERT INTO login_security (ident, fail_count, locked_until) VALUES (?,?,?) "
+            "ON CONFLICT(ident) DO UPDATE SET fail_count=excluded.fail_count, locked_until=excluded.locked_until",
+            (ident, fail_count, locked_until),
+        )
+        conn.commit()
+        return {"locked": fail_count >= max_attempts, "wait": lock_seconds if fail_count >= max_attempts else 0.0, "fail_count": fail_count}
+    finally:
+        conn.close()
+
+
+def get_login_lock(ident: str) -> dict:
+    """查询锁定状态，返回 {locked, wait, fail_count}。"""
+    now = time.time()
+    conn = _connect()
+    try:
+        row = conn.execute("SELECT * FROM login_security WHERE ident = ?", (ident,)).fetchone()
+        if row is None:
+            return {"locked": False, "wait": 0.0, "fail_count": 0}
+        locked = row["locked_until"] > now
+        return {"locked": locked, "wait": max(0.0, row["locked_until"] - now), "fail_count": row["fail_count"]}
+    finally:
+        conn.close()
+
+
+def clear_login_failures(ident: str) -> None:
+    conn = _connect()
+    try:
+        conn.execute("DELETE FROM login_security WHERE ident = ?", (ident,))
+        conn.commit()
     finally:
         conn.close()

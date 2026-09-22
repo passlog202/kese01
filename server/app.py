@@ -21,7 +21,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from core.config import BRANDS, CATEGORIES, TAGS_VOCAB
 from database import db
 from services import standard_service
-from server import mailer, schemas, security
+from server import limits, mailer, schemas, security
 from server.service import (
     list_favorites,
     list_products,
@@ -48,6 +48,31 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def security_headers_and_body_limit(request: Request, call_next):
+    """安全响应头 + 请求体大小上限拦截。"""
+    # 1) 请求体大小限制（在路由前拦下超大请求）
+    if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        cl = request.headers.get("content-length")
+        if cl and cl.isdigit() and int(cl) > limits.MAX_BODY_BYTES:
+            return JSONResponse(
+                status_code=413,
+                content={
+                    "api_version": schemas.API_VERSION,
+                    "ok": False,
+                    "data": None,
+                    "error": {"code": "PAYLOAD_TOO_LARGE", "message": "请求体过大"},
+                },
+            )
+    response = await call_next(request)
+    # 2) 统一安全响应头
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    return response
 
 # 启动时保证数据库与种子数据已就绪
 db.init_db()
@@ -90,9 +115,11 @@ def _auth_payload(user) -> schemas.AuthData:
 # ---------------------------------------------------------------------------
 # 统一错误响应：让所有 4xx/5xx 都符合契约中的统一错误结构
 # ---------------------------------------------------------------------------
-def _error_body(code: str, message: str, field: str | None = None, status: int = 400) -> JSONResponse:
+def _error_body(code: str, message: str, field: str | None = None, status: int = 400, retry_after: int | None = None) -> JSONResponse:
+    headers = {"Retry-After": str(retry_after)} if retry_after is not None else None
     return JSONResponse(
         status_code=status,
+        headers=headers,
         content={
             "api_version": schemas.API_VERSION,
             "ok": False,
@@ -110,6 +137,7 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
             message=exc.detail.get("message", str(exc.detail)),
             field=exc.detail.get("field"),
             status=exc.status_code,
+            retry_after=exc.detail.get("retry_after"),
         )
     code = "NOT_FOUND" if exc.status_code == 404 else (
         "INVALID_REQUEST" if exc.status_code in (400, 422) else "INTERNAL_ERROR"
@@ -171,7 +199,13 @@ def health() -> schemas.HealthData:
     tags=["auth"],
     summary="注册",
 )
-def auth_register(req: schemas.RegisterRequest) -> schemas.AuthResponse:
+def auth_register(req: schemas.RegisterRequest, request: Request) -> schemas.AuthResponse:
+    ip = limits.client_ip(request)
+    # 限流：每 IP 每小时注册次数
+    limits.limit_or_raise(
+        f"register:ip:{ip}", limits.IP_REGISTER_PER_HOUR, 3600, db,
+        "注册过于频繁，请稍后再试", request,
+    )
     if db.get_user_by_username(req.username) is not None:
         raise HTTPException(status_code=409, detail={"code": "USER_EXISTS", "message": "用户名已存在", "field": "username"})
     email = (req.email or "").strip().lower() or None
@@ -188,16 +222,39 @@ def auth_register(req: schemas.RegisterRequest) -> schemas.AuthResponse:
     tags=["auth"],
     summary="登录（用户名或邮箱）",
 )
-def auth_login(req: schemas.LoginRequest) -> schemas.AuthResponse:
+def auth_login(req: schemas.LoginRequest, request: Request) -> schemas.AuthResponse:
     ident = (req.username or "").strip()
     password = req.password or ""
+    ip = limits.client_ip(request)
+
+    # 限流：每 IP 每 10 分钟登录尝试
+    limits.limit_or_raise(
+        f"login:ip:{ip}", limits.IP_LOGIN_PER_10MIN, 600, db,
+        "登录尝试过于频繁，请 10 分钟后再试", request,
+    )
+
+    # 账号锁定检查（连续失败）
+    lock = db.get_login_lock(ident)
+    if lock["locked"]:
+        raise HTTPException(
+            status_code=423,
+            detail={"code": "ACCOUNT_LOCKED", "message": f"账号已锁定，请 {int(lock['wait']) // 60 + 1} 分钟后重试", "retry_after": int(lock["wait"]) + 1},
+        )
+
     user = None
     if "@" in ident:
         user = db.get_user_by_email(ident.lower())
     elif ident:
         user = db.get_user_by_username(ident)
     if user is None or not security.verify_password(password, user["password_hash"]):
+        res = db.login_failure(ident, limits.LOGIN_MAX_FAILURES, limits.LOGIN_LOCK_SECONDS)
+        if res["locked"]:
+            raise HTTPException(
+                status_code=423,
+                detail={"code": "ACCOUNT_LOCKED", "message": f"连续失败 {limits.LOGIN_MAX_FAILURES} 次，账号已锁定 15 分钟", "retry_after": int(res["wait"]) + 1},
+            )
         raise HTTPException(status_code=401, detail={"code": "INVALID_CREDENTIALS", "message": "用户名/邮箱或密码错误"})
+    db.clear_login_failures(ident)
     return schemas.AuthResponse(ok=True, data=_auth_payload(user), error=None)
 
 
@@ -207,12 +264,30 @@ def auth_login(req: schemas.LoginRequest) -> schemas.AuthResponse:
     tags=["auth"],
     summary="发送邮箱验证码",
 )
-def auth_send_code(req: schemas.SendCodeRequest) -> schemas.SendCodeResponse:
+def auth_send_code(req: schemas.SendCodeRequest, request: Request) -> schemas.SendCodeResponse:
     email = req.email.strip().lower()
     purpose = req.purpose or "register"
+    ip = limits.client_ip(request)
 
     if purpose == "register" and db.get_user_by_email(email) is not None:
         raise HTTPException(status_code=409, detail={"code": "EMAIL_EXISTS", "message": "该邮箱已被注册", "field": "email"})
+
+    # 限流：同邮箱发码冷却（60s）
+    limits.limit_or_raise(
+        f"send:cooldown:{email}", 1, limits.EMAIL_COOLDOWN_SECONDS, db,
+        f"发送过于频繁，请 {limits.EMAIL_COOLDOWN_SECONDS} 秒后再试", request,
+    )
+    # 限流：同邮箱每小时上限
+    limits.limit_or_raise(
+        f"send:hour:{email}", limits.EMAIL_PER_HOUR, 3600, db,
+        f"该邮箱每小时最多发送 {limits.EMAIL_PER_HOUR} 封验证码", request,
+    )
+    # 限流：每 IP 每小时发码上限
+    limits.limit_or_raise(
+        f"send:ip:{ip}", limits.IP_SEND_PER_HOUR, 3600, db,
+        "当前网络发送验证码过于频繁，请稍后再试", request,
+    )
+
     if purpose == "reset" and db.get_user_by_email(email) is None:
         # 不暴露邮箱是否注册，统一提示已发送（防枚举）
         return schemas.SendCodeResponse(ok=True, data=schemas.SendCodeData(message="验证码已发送，请查收"), error=None)
@@ -253,9 +328,15 @@ def _verify_code_or_raise(email: str, code: str, purpose: str) -> None:
     tags=["auth"],
     summary="校验邮箱验证码",
 )
-def auth_verify_code(req: schemas.VerifyCodeRequest) -> schemas.VerifyCodeResponse:
+def auth_verify_code(req: schemas.VerifyCodeRequest, request: Request) -> schemas.VerifyCodeResponse:
     email = req.email.strip().lower()
     purpose = req.purpose or "register"
+    ip = limits.client_ip(request)
+    # 限流：每 IP 每 10 分钟验证码校验次数（防暴力枚举）
+    limits.limit_or_raise(
+        f"verify:ip:{ip}", limits.IP_VERIFY_PER_10MIN, 600, db,
+        "验证码校验过于频繁，请稍后再试", request,
+    )
     _verify_code_or_raise(email, req.code, purpose)
     return schemas.VerifyCodeResponse(ok=True, data={"verified": True}, error=None)
 
@@ -266,8 +347,14 @@ def auth_verify_code(req: schemas.VerifyCodeRequest) -> schemas.VerifyCodeRespon
     tags=["auth"],
     summary="邮箱验证码重置密码",
 )
-def auth_reset_password(req: schemas.ResetPasswordRequest) -> schemas.AuthResponse:
+def auth_reset_password(req: schemas.ResetPasswordRequest, request: Request) -> schemas.AuthResponse:
     email = req.email.strip().lower()
+    ip = limits.client_ip(request)
+    # 限流：每 IP 每 10 分钟重置密码尝试
+    limits.limit_or_raise(
+        f"reset:ip:{ip}", limits.IP_VERIFY_PER_10MIN, 600, db,
+        "重置操作过于频繁，请稍后再试", request,
+    )
     user = db.get_user_by_email(email)
     if user is None:
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "该邮箱未注册"})
