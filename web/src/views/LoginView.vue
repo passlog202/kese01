@@ -47,6 +47,12 @@ async function loadCaptcha() {
   }
 }
 
+// 看不清换一张：清空已输入内容并重新获取
+function refreshCaptcha() {
+  form.captcha = ''
+  loadCaptcha()
+}
+
 function switchMode(m) {
   mode.value = m
   form.password = ''
@@ -224,8 +230,11 @@ async function submit() {
         </el-form-item>
         <el-form-item label="图形验证码">
           <div class="captcha-row">
-            <el-input v-model="form.captcha" placeholder="4 位验证码" maxlength="4" size="large" style="flex:1" />
-            <div class="captcha-img" :class="{ loading: captchaLoading }" @click="loadCaptcha" title="点击刷新">
+            <div class="captcha-input">
+              <el-input v-model="form.captcha" placeholder="4 位验证码" maxlength="4" size="large" @keyup.enter="submit" />
+              <el-button link type="primary" class="captcha-refresh-text" @click="refreshCaptcha">看不清？换一张</el-button>
+            </div>
+            <div class="captcha-img" :class="{ loading: captchaLoading }" @click="refreshCaptcha" title="点击刷新">
               <img v-if="captcha.image" :src="captcha.image" alt="captcha" />
               <span v-else class="captcha-placeholder">加载中…</span>
             </div>
@@ -321,6 +330,23 @@ h1 {
   gap: 10px;
   align-items: center;
   width: 100%;
+}
+.captcha-input {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.captcha-input .el-input {
+  width: 100%;
+}
+.captcha-refresh-text {
+  font-size: 12px;
+  padding: 0;
+  height: auto;
+  line-height: 1.4;
 }
 .captcha-img {
   width: 120px;
