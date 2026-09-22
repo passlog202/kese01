@@ -40,8 +40,20 @@ CREATE TABLE IF NOT EXISTS products (
 CREATE TABLE IF NOT EXISTS users (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     username       TEXT NOT NULL UNIQUE,
+    email          TEXT UNIQUE,
     password_hash  TEXT NOT NULL,
+    email_verified INTEGER NOT NULL DEFAULT 0,
     created_at     TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS email_codes (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    email       TEXT NOT NULL,
+    purpose     TEXT NOT NULL,
+    code_hash   TEXT NOT NULL,
+    expires_at  TEXT NOT NULL,
+    attempts    INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS recommendation_history (
@@ -114,6 +126,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
     bcols = {r[1] for r in conn.execute("PRAGMA table_info(browse_history)").fetchall()}
     if "user_id" not in bcols:
         conn.execute("ALTER TABLE browse_history ADD COLUMN user_id INTEGER NOT NULL DEFAULT 0")
+    # 邮箱注册：users 补充 email / email_verified 列（幂等）
+    ucols = {r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
+    if "email" not in ucols:
+        conn.execute("ALTER TABLE users ADD COLUMN email TEXT UNIQUE")
+    if "email_verified" not in ucols:
+        conn.execute("ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0")
 
 
 def seed_from_csv(csv_path: Optional[Path] = None) -> int:
@@ -200,12 +218,12 @@ def product_count() -> int:
 # ---------------------------------------------------------------------------
 # 用户
 # ---------------------------------------------------------------------------
-def create_user(username: str, password_hash: str) -> int:
+def create_user(username: str, password_hash: str, email: Optional[str] = None, email_verified: int = 0) -> int:
     conn = _connect()
     try:
         cur = conn.execute(
-            "INSERT INTO users (username, password_hash, created_at) VALUES (?,?,?)",
-            (username, password_hash, _now()),
+            "INSERT INTO users (username, email, password_hash, email_verified, created_at) VALUES (?,?,?,?,?)",
+            (username, email, password_hash, email_verified, _now()),
         )
         conn.commit()
         return cur.lastrowid
@@ -221,10 +239,72 @@ def get_user_by_username(username: str) -> Optional[sqlite3.Row]:
         conn.close()
 
 
+def get_user_by_email(email: str) -> Optional[sqlite3.Row]:
+    conn = _connect()
+    try:
+        return conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+    finally:
+        conn.close()
+
+
 def get_user(uid: int) -> Optional[sqlite3.Row]:
     conn = _connect()
     try:
         return conn.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
+    finally:
+        conn.close()
+
+
+def set_user_email(user_id: int, email: str) -> None:
+    conn = _connect()
+    try:
+        conn.execute("UPDATE users SET email = ?, email_verified = 1 WHERE id = ?", (email, user_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def update_password(user_id: int, password_hash: str) -> None:
+    conn = _connect()
+    try:
+        conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (password_hash, user_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# 邮箱验证码（可选邮箱注册/找回密码）
+# ---------------------------------------------------------------------------
+def save_email_code(email: str, purpose: str, code_hash: str, expires_at: str) -> int:
+    conn = _connect()
+    try:
+        cur = conn.execute(
+            "INSERT INTO email_codes (email, purpose, code_hash, expires_at, created_at) VALUES (?,?,?,?,?)",
+            (email, purpose, code_hash, expires_at, _now()),
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def get_latest_email_code(email: str, purpose: str) -> Optional[sqlite3.Row]:
+    conn = _connect()
+    try:
+        return conn.execute(
+            "SELECT * FROM email_codes WHERE email = ? AND purpose = ? ORDER BY id DESC LIMIT 1",
+            (email, purpose),
+        ).fetchone()
+    finally:
+        conn.close()
+
+
+def bump_email_code_attempts(code_id: int) -> None:
+    conn = _connect()
+    try:
+        conn.execute("UPDATE email_codes SET attempts = attempts + 1 WHERE id = ?", (code_id,))
+        conn.commit()
     finally:
         conn.close()
 

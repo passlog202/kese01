@@ -10,4 +10,7 @@ smart_shop.db
 # 前端依赖与产物（web 镜像内部会重新 npm install / build）
 web/node_modules
 web/dist
+
+# 调试邮件落盘
+data/mail_outbox
 docs

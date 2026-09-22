@@ -7,6 +7,7 @@ venv/
 # 运行时产物（数据库为本地运行生成，不入库）
 smart_shop.db
 *.db-journal
+data/mail_outbox/
 
 # 前端
 web/node_modules/

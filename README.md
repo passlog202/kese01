@@ -6,14 +6,14 @@
 > - **执行标准核验**：识别 GB/GB·T/QB·T 编号，核对现行/废止/未收录状态
 > - **可解释推荐**：TF-IDF + 余弦相似度 + 多因素加权评分，给出推荐理由
 > - **前后端解耦**：Vue 3 前端纯 HTTP 调用 FastAPI 契约服务（Swagger 文档）
-> - **登录鉴权**：JWT Bearer Token + PBKDF2 密码哈希，收藏/历史按用户隔离
+> - **登录鉴权 + 邮箱注册**：JWT + PBKDF2 密码哈希；邮箱验证码注册/找回密码，收藏与历史按用户隔离
 > - **Docker 部署**：nginx 前端 + uvicorn 后端一键编排
 
 ## 功能
 
 | 页面 | 说明 |
 | --- | --- |
-| 🔐 登录/注册 | JWT 鉴权入口，首次使用注册任意账号 |
+| 🔐 登录/注册/找回密码 | 邮箱验证码注册、用户名或邮箱登录、忘记密码重置 |
 | 🏠 首页 | 系统概览、指标卡与类别分布 |
 | 🛍️ 商品中心 | 搜索/筛选商品，查看执行标准核验状态、收藏 |
 | 🤖 智能导购 | 表单 + 一句话解析 → 标准核验 → 加权评分 → Top-N + 评分明细 |
@@ -39,13 +39,16 @@ npm install
 npm run dev                        # http://localhost:5173 （已代理 /api → 8000）
 ```
 
-> 打开前端后首次访问会跳转登录页，注册任意账号即可体验。默认无预置账号，
+> 打开前端后首次访问会跳转登录页。注册支持「邮箱验证码」：输入邮箱 → 点击发送验证码，
+> 未配置 SMTP 时后端处于调试模式会在界面直接回显验证码（配置 SMTP 后走真实邮件）。
 > 所有浏览器数据（收藏、历史）都按登录用户隔离。
 
 ### Docker 部署
 
 ```bash
 export KESE_JWT_SECRET=$(openssl rand -hex 32)   # 生产环境务必设置强随机密钥
+# 可选：配置邮箱验证码 SMTP（不配置则进入调试模式回显验证码）
+export KESE_SMTP_HOST=smtp.example.com KESE_SMTP_PORT=465 KESE_SMTP_USER=you@example.com KESE_SMTP_PASSWORD=xxx
 docker compose up --build -d
 # 前端 http://localhost:8080 （nginx 托管并反代 /api）
 # 后端 http://localhost:8000/docs （调试用）

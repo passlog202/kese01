@@ -214,16 +214,35 @@ class MetaResponse(BaseModel):
 class RegisterRequest(BaseModel):
     username: str = Field(min_length=3, max_length=32, pattern=r"^[A-Za-z0-9_\u4e00-\u9fa5]{3,32}$")
     password: str = Field(min_length=6, max_length=64)
+    email: Optional[str] = Field(default=None, description="邮箱（可选，提供则走邮箱验证/可直接绑定）")
 
 
 class LoginRequest(BaseModel):
-    username: str
-    password: str
+    username: str = ""
+    password: str = ""
+
+
+class SendCodeRequest(BaseModel):
+    email: str
+    purpose: Optional[str] = Field(default="register", description="register / reset")
+
+
+class VerifyCodeRequest(BaseModel):
+    email: str
+    code: str = Field(min_length=6, max_length=6)
+    purpose: Optional[str] = "register"
+
+
+class ResetPasswordRequest(BaseModel):
+    email: str
+    code: str = Field(min_length=6, max_length=6)
+    new_password: str = Field(min_length=6, max_length=64)
 
 
 class AuthUser(BaseModel):
     id: int
     username: str
+    email: Optional[str] = None
 
 
 class AuthData(BaseModel):
@@ -236,6 +255,27 @@ class AuthResponse(BaseModel):
     api_version: str = API_VERSION
     ok: bool = True
     data: AuthData
+    error: Optional[dict] = None
+
+
+class SendCodeData(BaseModel):
+    message: str = "验证码已发送"
+    # 仅调试模式（未配置 SMTP）会回显验证码，便于演示；生产环境为 None
+    code: Optional[str] = None
+    debug: bool = False
+
+
+class SendCodeResponse(BaseModel):
+    api_version: str = API_VERSION
+    ok: bool = True
+    data: SendCodeData
+    error: Optional[dict] = None
+
+
+class VerifyCodeResponse(BaseModel):
+    api_version: str = API_VERSION
+    ok: bool = True
+    data: dict = {"verified": True}
     error: Optional[dict] = None
 
 

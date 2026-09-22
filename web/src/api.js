@@ -41,9 +41,12 @@ export const api = {
   meta: () => http.get('/meta'),
 
   // 认证
-  register: (username, password) => http.post('/auth/register', { username, password }),
-  login: (username, password) => http.post('/auth/login', { username, password }),
+  register: (username, password, email = null) => http.post('/auth/register', { username, password, email }),
+  login: (identifier, password) => http.post('/auth/login', { username: identifier, password }),
   me: () => http.get('/auth/me'),
+  sendCode: (email, purpose = 'register') => http.post('/auth/send-code', { email, purpose }),
+  verifyCode: (email, code, purpose = 'register') => http.post('/auth/verify-code', { email, code, purpose }),
+  resetPassword: (email, code, new_password) => http.post('/auth/reset-password', { email, code, new_password }),
 
   // 业务
   products: (params) => http.get('/products', { params }),

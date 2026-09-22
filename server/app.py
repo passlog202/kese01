@@ -21,7 +21,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from core.config import BRANDS, CATEGORIES, TAGS_VOCAB
 from database import db
 from services import standard_service
-from server import schemas, security
+from server import mailer, schemas, security
 from server.service import (
     list_favorites,
     list_products,
@@ -74,7 +74,17 @@ def get_current_user(
     user = db.get_user(uid)
     if user is None:
         raise HTTPException(status_code=401, detail={"code": "UNAUTHORIZED", "message": "用户不存在"})
-    return {"id": user["id"], "username": user["username"]}
+    return {"id": user["id"], "username": user["username"], "email": user["email"]}
+
+
+def _auth_payload(user) -> schemas.AuthData:
+    """统一构造登录/注册的令牌与用户信息响应。"""
+    uid = user["id"]
+    token = security.create_access_token(uid, user["username"])
+    return schemas.AuthData(
+        token=token,
+        user=schemas.AuthUser(id=uid, username=user["username"], email=user["email"]),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -164,31 +174,107 @@ def health() -> schemas.HealthData:
 def auth_register(req: schemas.RegisterRequest) -> schemas.AuthResponse:
     if db.get_user_by_username(req.username) is not None:
         raise HTTPException(status_code=409, detail={"code": "USER_EXISTS", "message": "用户名已存在", "field": "username"})
-    uid = db.create_user(req.username, security.hash_password(req.password))
-    token = security.create_access_token(uid, req.username)
-    return schemas.AuthResponse(
-        ok=True,
-        data=schemas.AuthData(token=token, user=schemas.AuthUser(id=uid, username=req.username)),
-        error=None,
-    )
+    email = (req.email or "").strip().lower() or None
+    if email and db.get_user_by_email(email) is not None:
+        raise HTTPException(status_code=409, detail={"code": "EMAIL_EXISTS", "message": "该邮箱已被使用", "field": "email"})
+    uid = db.create_user(req.username, security.hash_password(req.password), email=email, email_verified=0)
+    user = db.get_user(uid)
+    return schemas.AuthResponse(ok=True, data=_auth_payload(user), error=None)
 
 
 @app.post(
     "/api/v1/auth/login",
     response_model=schemas.AuthResponse,
     tags=["auth"],
-    summary="登录",
+    summary="登录（用户名或邮箱）",
 )
 def auth_login(req: schemas.LoginRequest) -> schemas.AuthResponse:
-    user = db.get_user_by_username(req.username)
-    if user is None or not security.verify_password(req.password, user["password_hash"]):
-        raise HTTPException(status_code=401, detail={"code": "INVALID_CREDENTIALS", "message": "用户名或密码错误"})
-    token = security.create_access_token(user["id"], user["username"])
-    return schemas.AuthResponse(
+    ident = (req.username or "").strip()
+    password = req.password or ""
+    user = None
+    if "@" in ident:
+        user = db.get_user_by_email(ident.lower())
+    elif ident:
+        user = db.get_user_by_username(ident)
+    if user is None or not security.verify_password(password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail={"code": "INVALID_CREDENTIALS", "message": "用户名/邮箱或密码错误"})
+    return schemas.AuthResponse(ok=True, data=_auth_payload(user), error=None)
+
+
+@app.post(
+    "/api/v1/auth/send-code",
+    response_model=schemas.SendCodeResponse,
+    tags=["auth"],
+    summary="发送邮箱验证码",
+)
+def auth_send_code(req: schemas.SendCodeRequest) -> schemas.SendCodeResponse:
+    email = req.email.strip().lower()
+    purpose = req.purpose or "register"
+
+    if purpose == "register" and db.get_user_by_email(email) is not None:
+        raise HTTPException(status_code=409, detail={"code": "EMAIL_EXISTS", "message": "该邮箱已被注册", "field": "email"})
+    if purpose == "reset" and db.get_user_by_email(email) is None:
+        # 不暴露邮箱是否注册，统一提示已发送（防枚举）
+        return schemas.SendCodeResponse(ok=True, data=schemas.SendCodeData(message="验证码已发送，请查收"), error=None)
+
+    code = security.generate_verify_code()
+    db.save_email_code(email, purpose, security.hash_verify_code(code), security.code_expiry().strftime("%Y-%m-%d %H:%M:%S"))
+
+    label = "注册" if purpose == "register" else "找回密码"
+    mailer.send_code_email(email, code, label)
+
+    # 调试模式回显验证码，便于课设演示
+    debug_code = code if mailer.debug_mode() else None
+    return schemas.SendCodeResponse(
         ok=True,
-        data=schemas.AuthData(token=token, user=schemas.AuthUser(id=user["id"], username=user["username"])),
+        data=schemas.SendCodeData(message="验证码已发送，请查收", code=debug_code, debug=mailer.debug_mode()),
         error=None,
     )
+
+
+def _verify_code_or_raise(email: str, code: str, purpose: str) -> None:
+    """校验验证码：存在 / 未过期 / 尝试次数未超限 / 取值一致。"""
+    rec = db.get_latest_email_code(email, purpose)
+    if rec is None:
+        raise HTTPException(status_code=400, detail={"code": "CODE_INVALID", "message": "验证码无效，请重新发送", "field": "code"})
+    if rec["expires_at"] < datetime.now().strftime("%Y-%m-%d %H:%M:%S"):
+        raise HTTPException(status_code=400, detail={"code": "CODE_EXPIRED", "message": "验证码已过期，请重新发送", "field": "code"})
+    if rec["attempts"] >= security.VERIFY_CODE_MAX_ATTEMPTS:
+        raise HTTPException(status_code=429, detail={"code": "CODE_LOCKED", "message": "尝试次数过多，请重新发送验证码", "field": "code"})
+    if not security.verify_code_hash(code, rec["code_hash"]):
+        db.bump_email_code_attempts(rec["id"])
+        remaining = security.VERIFY_CODE_MAX_ATTEMPTS - rec["attempts"] - 1
+        raise HTTPException(status_code=400, detail={"code": "CODE_INVALID", "message": f"验证码错误，剩余 {max(remaining, 0)} 次", "field": "code"})
+
+
+@app.post(
+    "/api/v1/auth/verify-code",
+    response_model=schemas.VerifyCodeResponse,
+    tags=["auth"],
+    summary="校验邮箱验证码",
+)
+def auth_verify_code(req: schemas.VerifyCodeRequest) -> schemas.VerifyCodeResponse:
+    email = req.email.strip().lower()
+    purpose = req.purpose or "register"
+    _verify_code_or_raise(email, req.code, purpose)
+    return schemas.VerifyCodeResponse(ok=True, data={"verified": True}, error=None)
+
+
+@app.post(
+    "/api/v1/auth/reset-password",
+    response_model=schemas.AuthResponse,
+    tags=["auth"],
+    summary="邮箱验证码重置密码",
+)
+def auth_reset_password(req: schemas.ResetPasswordRequest) -> schemas.AuthResponse:
+    email = req.email.strip().lower()
+    user = db.get_user_by_email(email)
+    if user is None:
+        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "该邮箱未注册"})
+    _verify_code_or_raise(email, req.code, "reset")
+    db.update_password(user["id"], security.hash_password(req.new_password))
+    fresh = db.get_user(user["id"])
+    return schemas.AuthResponse(ok=True, data=_auth_payload(fresh), error=None)
 
 
 @app.get("/api/v1/meta", tags=["meta"], summary="元数据（类别/品牌/标签词表）")
@@ -210,7 +296,11 @@ def meta() -> schemas.MetaResponse:
     summary="当前登录用户",
 )
 def auth_me(user: dict = Depends(get_current_user)) -> schemas.MeResponse:
-    return schemas.MeResponse(ok=True, data=schemas.AuthUser(id=user["id"], username=user["username"]), error=None)
+    return schemas.MeResponse(
+        ok=True,
+        data=schemas.AuthUser(id=user["id"], username=user["username"], email=user.get("email")),
+        error=None,
+    )
 
 
 # ---------------------------------------------------------------------------

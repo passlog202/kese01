@@ -67,3 +67,29 @@ def decode_access_token(token: str) -> Optional[dict]:
         return jwt.decode(token, _JWT_SECRET, algorithms=[JWT_ALGORITHM])
     except jwt.PyJWTError:
         return None
+
+
+# ---------------------------------------------------------------------------
+# 邮箱验证码
+# ---------------------------------------------------------------------------
+VERIFY_CODE_TTL_SECONDS = int(os.environ.get("KESE_VERIFY_CODE_TTL", 600))  # 10 分钟
+VERIFY_CODE_MAX_ATTEMPTS = int(os.environ.get("KESE_VERIFY_CODE_MAX_ATTEMPTS", 5))
+
+
+def generate_verify_code() -> str:
+    """生成 6 位数字验证码。"""
+    return f"{secrets.randbelow(1_000_000):06d}"
+
+
+def hash_verify_code(code: str) -> str:
+    """验证码仅存哈希（HMAC），防止数据库泄露后验证码被直接读取。"""
+    return hashlib.sha256(code.encode("utf-8")).hexdigest()
+
+
+def verify_code_hash(code: str, stored_hash: str) -> bool:
+    return secrets.compare_digest(hash_verify_code(code), stored_hash)
+
+
+def code_expiry() -> datetime:
+    """验证码过期时间（naive，与 db 中的字符串比较保持一致）。"""
+    return datetime.now() + timedelta(seconds=VERIFY_CODE_TTL_SECONDS)

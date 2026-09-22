@@ -13,6 +13,14 @@ services:
       - KESE_DB_PATH=/app/data/smart_shop.db
       # 生产环境务必替换为强随机密钥（如 openssl rand -hex 32），并建议用 secrets 管理
       - KESE_JWT_SECRET=${KESE_JWT_SECRET:-change-me-in-production}
+      # 邮箱验证码 SMTP（可选）。未配置则进入调试模式：验证码在接口响应中回显。
+      # 例如 QQ 邮箱：KESE_SMTP_HOST=smtp.qq.com KESE_SMTP_PORT=465
+      #   KESE_SMTP_USER=you@qq.com KESE_SMTP_PASSWORD=授权码 KESE_SMTP_FROM=you@qq.com
+      - KESE_SMTP_HOST=${KESE_SMTP_HOST:-}
+      - KESE_SMTP_PORT=${KESE_SMTP_PORT:-465}
+      - KESE_SMTP_USER=${KESE_SMTP_USER:-}
+      - KESE_SMTP_PASSWORD=${KESE_SMTP_PASSWORD:-}
+      - KESE_SMTP_FROM=${KESE_SMTP_FROM:-}
     ports:
       - "8000:8000"
     volumes:
