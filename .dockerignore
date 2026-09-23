@@ -1,0 +1,16 @@
+# Docker 构建时排除本地产物与依赖目录
+.git
+.venv
+venv
+__pycache__
+*.pyc
+smart_shop.db
+*.db-journal
+
+# 前端依赖与产物（web 镜像内部会重新 npm install / build）
+web/node_modules
+web/dist
+
+# 调试邮件落盘
+data/mail_outbox
+docs

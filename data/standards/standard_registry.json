@@ -1,0 +1,122 @@
+[
+  {
+    "code": "GB 4806.7-2023",
+    "name": "食品安全国家标准 食品接触用塑料材料及制品",
+    "category": "食品安全国家标准",
+    "material": "塑料",
+    "status": "现行",
+    "publish_year": 2023,
+    "implement_year": 2024,
+    "note": "替代 GB 4806.7-2016，食品接触用塑料制品的现行强制标准。"
+  },
+  {
+    "code": "GB 4806.7-2016",
+    "name": "食品安全国家标准 食品接触用塑料材料及制品",
+    "category": "食品安全国家标准",
+    "material": "塑料",
+    "status": "废止",
+    "publish_year": 2016,
+    "implement_year": 2017,
+    "note": "已被 GB 4806.7-2023 替代。"
+  },
+  {
+    "code": "GB 4806.5-2016",
+    "name": "食品安全国家标准 玻璃制品",
+    "category": "食品安全国家标准",
+    "material": "玻璃",
+    "status": "现行",
+    "publish_year": 2016,
+    "implement_year": 2017,
+    "note": "食品接触用玻璃制品的现行标准。"
+  },
+  {
+    "code": "GB 4806.9-2023",
+    "name": "食品安全国家标准 食品接触用金属材料及制品",
+    "category": "食品安全国家标准",
+    "material": "金属",
+    "status": "现行",
+    "publish_year": 2023,
+    "implement_year": 2024,
+    "note": "替代 GB 4806.9-2016，食品接触用金属制品的现行强制标准。"
+  },
+  {
+    "code": "GB 4806.9-2016",
+    "name": "食品安全国家标准 食品接触用金属材料及制品",
+    "category": "食品安全国家标准",
+    "material": "金属",
+    "status": "废止",
+    "publish_year": 2016,
+    "implement_year": 2017,
+    "note": "已被 GB 4806.9-2023 替代。"
+  },
+  {
+    "code": "GB 4806.4-2016",
+    "name": "食品安全国家标准 陶瓷制品",
+    "category": "食品安全国家标准",
+    "material": "陶瓷",
+    "status": "现行",
+    "publish_year": 2016,
+    "implement_year": 2017,
+    "note": "食品接触用陶瓷制品的现行标准。"
+  },
+  {
+    "code": "GB 4806.11-2016",
+    "name": "食品安全国家标准 食品接触用橡胶材料及制品",
+    "category": "食品安全国家标准",
+    "material": "橡胶",
+    "status": "现行",
+    "publish_year": 2016,
+    "implement_year": 2017,
+    "note": "食品接触用橡胶制品的现行标准。"
+  },
+  {
+    "code": "GB 4806.1-2016",
+    "name": "食品安全国家标准 食品接触材料及制品通用安全要求",
+    "category": "食品安全国家标准",
+    "material": "通用",
+    "status": "现行",
+    "publish_year": 2016,
+    "implement_year": 2017,
+    "note": "食品接触材料的通用安全要求，所有材质的基础标准。"
+  },
+  {
+    "code": "GB 7718-2011",
+    "name": "食品安全国家标准 预包装食品标签通则",
+    "category": "食品安全国家标准",
+    "material": "包装",
+    "status": "现行",
+    "publish_year": 2011,
+    "implement_year": 2012,
+    "note": "预包装食品标签的现行标准（用于展示标准核验的通用性）。"
+  },
+  {
+    "code": "QB/T 4049-2021",
+    "name": "食品接触用塑料保鲜盒",
+    "category": "行业标准",
+    "material": "塑料",
+    "status": "现行",
+    "publish_year": 2021,
+    "implement_year": 2022,
+    "note": "保鲜盒行业标准，现行有效。"
+  },
+  {
+    "code": "QB/T 2442-1999",
+    "name": "日用陶瓷标志、包装、运输、贮存规则",
+    "category": "行业标准",
+    "material": "陶瓷",
+    "status": "废止",
+    "publish_year": 1999,
+    "implement_year": 1999,
+    "note": "部分条款已废止（示例）。"
+  },
+  {
+    "code": "GB/T 29606-2013",
+    "name": "不锈钢真空杯",
+    "category": "推荐性国家标准",
+    "material": "金属",
+    "status": "现行",
+    "publish_year": 2013,
+    "implement_year": 2014,
+    "note": "不锈钢真空杯的推荐性标准。"
+  }
+]

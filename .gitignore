@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 运行时产物（数据库为本地运行生成，不入库）
+smart_shop.db
+*.db-journal
+data/mail_outbox/
+data/snapshots/
+
+# 登录态 cookie（真实数据源抓取需要，严禁入库）
+providers/state/
+
+# 环境变量（含京东 cookie 等敏感信息，严禁入库）
+.env
+.env.*
+!.env.example
+
+# 前端
+web/node_modules/
+web/dist/
+
+# 其他
+.DS_Store
+.idea/
+.vscode/
