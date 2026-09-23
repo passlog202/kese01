@@ -236,6 +236,83 @@ def product_count() -> int:
 
 
 # ---------------------------------------------------------------------------
+# 数据源同步（真实电商/外平台数据写入商品表）
+# ---------------------------------------------------------------------------
+def sync_products(items: list[dict]) -> int:
+    """把 providers 适配层出品的外部商品写入 products 表。
+
+    约定：
+    - items 为字典列表（providers.base.NormalizedProduct 经 vars/ 序列化），
+      字段名与 products 表一致；external_id 作为来源唯一标识；
+    - 命中同 (source, external_id)（mock 用 url 兜底）则更新，否则插入；
+    - 返回写入条数。
+    """
+    written = 0
+
+    def _blank(v) -> str:
+        return "" if v is None else v
+
+    with _connect() as conn:
+        for it in items:
+            source = _blank(it.get("source")) or "unknown"
+            ext_id = _blank(it.get("external_id"))
+            url = _blank(it.get("url"))
+            # 以 url 为主键匹配：mock 商品 url 形如 https://example.com/item/N，
+            # pdd 商品 url 含 goods_id，都是稳定唯一键；即使历史库 source
+            # 命名不一致（seed/mock）也能正确 upsert 而非重复插入。
+            row = None
+            if url:
+                row = conn.execute("SELECT id FROM products WHERE url = ?", (url,)).fetchone()
+            if row is None and source != "mock" and ext_id:
+                row = conn.execute(
+                    "SELECT id FROM products WHERE source = ? AND url LIKE ?", (source, f"%{ext_id}%")
+                ).fetchone()
+
+            name = _blank(it.get("name"))
+            if not name:
+                continue
+            tags = it.get("tags") or []
+            tags_str = " ".join(str(t) for t in tags)
+            values = (
+                name,
+                _blank(it.get("category")) or "其他",
+                _blank(it.get("brand")) or "其他",
+                float(it.get("price") or 0.0),
+                float(it.get("rating") or 0.0),
+                int(it.get("sales") or 0),
+                max(0, int(it.get("stock") or 0)),
+                _blank(it.get("shop")) or "拼多多",
+                _blank(it.get("shop_type")) or "第三方店铺",
+                _blank(it.get("material")),
+                _blank(it.get("standard_code")),
+                tags_str,
+                _blank(it.get("description")),
+                source,
+                url,
+                _blank(it.get("image")),
+                _now(),
+            )
+            if row is not None:
+                conn.execute(
+                    """UPDATE products SET name=?, category=?, brand=?, price=?, rating=?, sales=?,
+                       stock=?, shop=?, shop_type=?, material=?, standard_code=?, tags=?,
+                       description=?, source=?, url=?, image=?, created_at=? WHERE id=?""",
+                    values + (row["id"],),
+                )
+            else:
+                conn.execute(
+                    """INSERT INTO products
+                       (name, category, brand, price, rating, sales, stock, shop, shop_type,
+                        material, standard_code, tags, description, source, url, image, created_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    values,
+                )
+            written += 1
+        conn.commit()
+    return written
+
+
+# ---------------------------------------------------------------------------
 # 用户
 # ---------------------------------------------------------------------------
 def create_user(username: str, password_hash: str, email: Optional[str] = None, email_verified: int = 0) -> int:

@@ -8,6 +8,15 @@ venv/
 smart_shop.db
 *.db-journal
 data/mail_outbox/
+data/snapshots/
+
+# 登录态 cookie（真实数据源抓取需要，严禁入库）
+providers/state/
+
+# 环境变量（含京东 cookie 等敏感信息，严禁入库）
+.env
+.env.*
+!.env.example
 
 # 前端
 web/node_modules/

@@ -8,6 +8,7 @@
 > - **前后端解耦**：Vue 3 前端纯 HTTP 调用 FastAPI 契约服务（Swagger 文档）
 > - **登录鉴权 + 邮箱注册**：JWT + PBKDF2 密码哈希；邮箱验证码注册/找回密码，收藏与历史按用户隔离
 > - **安全防护**：图形验证码、发码/IP 限流、登录失败锁定、请求体大小限制、安全响应头
+> - **真实数据源**：`providers/` 适配层接入京东商品搜索（纯 HTTP，匿名可试），一键同步真实商品
 > - **Docker 部署**：nginx 前端 + uvicorn 后端一键编排
 
 ## 功能
@@ -22,6 +23,7 @@
 | ❤️ 收藏商品 | SQLite 持久化收藏 |
 | 🕘 推荐历史 | 历史查询与推荐结果回看 |
 | 📊 数据分析 | 价格分布、品牌排行、评分-价格散点、标准合规统计 |
+| 📥 数据源同步 | 一键从京东 / Mock 同步商品入库 |
 
 ## 快速开始
 
@@ -47,6 +49,27 @@ npm run dev                        # http://localhost:5173 （已代理 /api →
 > 图形验证码由 Pillow 动态生成（数字 + 去易混淆字母、干扰线/噪点/旋转，一次性使用、默认 180 秒
 > 过期）；依赖 TTF 字体，Debian/Ubuntu 下为 `fonts-dejavu-core`（Docker 镜像已内置），
 > 缺字体时自动回退 Pillow 内置字体，不影响运行。
+
+### 接入京东真实数据源
+
+默认数据源是 Mock（开箱即跑）。要拉京东真实商品（**纯 HTTP，无需浏览器**），切换环境变量即可：
+
+```bash
+export KESE_PRODUCT_SOURCE=jd
+
+# 方式一：登录后，前端「数据源同步」页输入关键词一键同步
+# 方式二：命令行
+.venv/bin/python -m providers.cli --keyword 保鲜盒 --limit 40
+```
+
+京东**匿名可尝试搜索**；命中风控/要求登录时，提供登录 cookie 二选一：
+- 环境变量 `KESE_JD_COOKIE=<复制搜索页 cookie 串>`
+- 文件 `providers/state/jd_cookie.txt`（已被 .gitignore 忽略）
+
+> ⚠️ 京东搜索接口**不含执行标准号/材质/评分/库存**等字段，适配层如实留空、核验时标记
+> 「未标注」，绝不编造；真实商品的标准号需用 OCR（增量模块）补齐。
+> 实现参考开源项目 Product-Crawling 的京东方案（见 `docs/数据源评估报告.md`），代码独立重写。
+> 完整环境变量样例见 `.env.example`。
 
 ### Docker 部署
 
@@ -74,7 +97,8 @@ algorithms/ (算法层：TF-IDF 余弦相似度 / 多因素加权评分)
 database/ + data/ (SQLite、种子 CSV、标准知识库 JSON)
 ```
 
-统一数据模型 `Product` 屏蔽数据来源差异，后续接入真实电商爬虫只需新增 ProductSource Adapter。
+统一数据模型 `Product` 屏蔽数据来源差异，真实电商数据源通过 `providers/` 适配层接入
+（已内置 `mock` / `jd`，切换 `KESE_PRODUCT_SOURCE` 即可）。
 前后端输出结构遵循 `docs/前后端契约.md`。
 
 ## 文档
@@ -83,3 +107,4 @@ database/ + data/ (SQLite、种子 CSV、标准知识库 JSON)
 - [docs/模块详细设计.md](docs/模块详细设计.md) — 各模块职责与核心逻辑
 - [docs/前后端契约.md](docs/前后端契约.md) — REST/JSON 契约（FastAPI 已落地）
 - [docs/Demo实施说明.md](docs/Demo实施说明.md) — 运行步骤、演示脚本、答辩话术
+- [docs/数据源评估报告.md](docs/数据源评估报告.md) — 真实数据源与开源爬虫底座测试结论

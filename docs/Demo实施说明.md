@@ -20,10 +20,11 @@
 6. **页面（Vue 3）**：首页 / 商品中心 / 智能导购 / 商品对比 / 收藏 / 推荐历史 / 数据分析，全部通过 HTTP 契约接口取数。
 7. **前后端契约实现**：`api_contract.py` + `server/`（FastAPI，含 Swagger 文档）；HTTP 引用推荐自动写入历史。
 8. **Docker 部署**：`Dockerfile.api` + `Dockerfile.web`(nginx) + `docker-compose.yml`。
+9. **真实数据源接入**：`providers/` 适配层 + 京东商品搜索（纯 HTTP，匿名可试），接口/CLI 一键同步。
 
 ### 未做（刻意，后续迭代）
 
-真实电商爬虫、OCR 包装识别、评论情感、跨平台 SKU 比价、多用户登录/鉴权。
+OCR 包装识别（补齐真实商品执行标准号）、评论情感、跨平台 SKU 比价、淘宝/闲鱼爬虫源。
 
 ---
 
@@ -91,9 +92,11 @@ docker compose up --build -d
 
 ### Q：数据从哪来？会不会是假数据？
 
-> Demo 阶段使用 `MockProductSource`（CSV → SQLite）跑通全链路。因为架构上采用了
-> 「ProductSource 适配器 + 统一 Product 模型」，以后接入京东/淘宝爬虫、Pinduoduo 官方 API 时，
-> 推荐与核验逻辑一行都不用改，只需新增一个 Adapter 实现同一导入接口。
+> 默认仍是 Mock 种子数据（`data/products.csv` → SQLite），保证开箱即跑。
+> 已通过 `providers/` 适配层接入**京东商品搜索**（纯 HTTP，无需浏览器）：
+> 设置 `KESE_PRODUCT_SOURCE=jd` 后，可登录「数据源同步」页或用 CLI 把真实商品写入商品表，
+> 推荐与核验逻辑一行都不用改。真实搜索接口不含执行标准号/材质，适配层如实标记「未标注」、
+> 绝不编造，后续用 OCR 补齐。
 
 ### Q：登录鉴权是怎么做的？
 

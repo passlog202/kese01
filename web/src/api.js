@@ -60,4 +60,5 @@ export const api = {
   addFavorite: (product_id) => http.post('/favorites', { product_id }),
   removeFavorite: (product_id) => http.delete(`/favorites/${product_id}`),
   history: (limit = 100) => http.get('/history/recommendations', { params: { limit } }),
+  syncDataSource: (keyword = '', limit = 40) => http.post('/data-source/sync', { keyword, limit }),
 }
